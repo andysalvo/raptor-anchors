@@ -1,0 +1,107 @@
+# raptor-anchors — §10A triple anchor, halves 2 and 3.
+#
+# Half 1 (the checkpoint commit) is pushed by Raptor's nightly-anchor task via
+# the GitHub contents API. This workflow answers each checkpoint push with:
+#   2. OpenTimestamps  — anchors/<day>.json.ots       (Bitcoin-anchored; the
+#      stamp starts "pending" and is upgraded by the weekly job below once the
+#      calendar aggregates into a block)
+#   3. Sigstore/Rekor  — anchors/<day>.json.sigstore.json (keyless sign-blob
+#      via this workflow's OIDC identity; bundle embeds the Rekor entry —
+#      instant third-party inclusion proof)
+# Proof files are committed back. The push paths-filter matches only
+# `anchors/*.json`, so committing *.ots / *.sigstore.json cannot re-trigger.
+name: anchor-proofs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "anchors/*.json"
+  schedule:
+    # weekly: upgrade pending .ots stamps to full Bitcoin attestations
+    - cron: "17 6 * * 0"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  id-token: write # cosign keyless OIDC
+
+jobs:
+  stamp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install OpenTimestamps client
+        run: pip install opentimestamps-client
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Stamp new checkpoints (OTS + Rekor)
+        if: github.event_name == 'push'
+        run: |
+          set -euo pipefail
+          # checkpoints touched by this push, minus ones already proofed
+          CHANGED=$(git diff --name-only HEAD^ HEAD -- 'anchors/*.json' 2>/dev/null || ls anchors/*.json)
+          for f in $CHANGED; do
+            [ -f "$f" ] || continue
+            case "$f" in *.sigstore.json) continue;; esac
+            if [ ! -f "$f.ots" ]; then
+              ots stamp "$f"
+            fi
+            if [ ! -f "$f.sigstore.json" ]; then
+              cosign sign-blob --yes "$f" --bundle "$f.sigstore.json"
+            fi
+          done
+
+      - name: Upgrade pending OTS stamps (weekly)
+        if: github.event_name != 'push'
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for f in anchors/*.json.ots; do
+            ots upgrade "$f" || true   # not yet in a block: try again next week
+          done
+
+      - name: Verify what can be verified now
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for b in anchors/*.json.sigstore.json; do
+            f="${b%.sigstore.json}"
+            cosign verify-blob "$f" --bundle "$b" \
+              --certificate-identity-regexp "^https://github.com/${{ github.repository }}/" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com
+          done
+
+      - name: Commit proofs back
+        run: |
+          set -euo pipefail
+          git config user.name "raptor-anchor-bot"
+          git config user.email "anchors@tryraptor.app"
+          git add anchors/*.ots anchors/*.sigstore.json 2>/dev/null || true
+          if ! git diff --cached --quiet; then
+            git commit -m "proofs: OTS + Rekor for anchored checkpoints"
+            git push
+          else
+            echo "no new proofs to commit"
+          fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ONE-PASTE INSTRUCTION FOR ANDY (the anchor PAT lacks `workflows` permission,
+# verified 2026-08-12: contents-API PUT of this file → 403):
+#   1. open https://github.com/andysalvo/raptor-anchors/new/main
+#   2. filename: .github/workflows/anchor-proofs.yml
+#   3. paste this file's content ABOVE this comment block, commit to main
+#   4. it runs on the NEXT checkpoint push (nightly-anchor, 23:55 UTC) —
+#      look for anchors/<day>.json.ots and .json.sigstore.json appearing.
+# (Alternative: grant the fine-grained PAT "Workflows: write" and re-run the
+#  API PUT from BUILD-LOG. Either way, do not edit anchors/*.json by hand.)
+# ─────────────────────────────────────────────────────────────────────────────

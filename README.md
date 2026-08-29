@@ -2,10 +2,15 @@
 
 Daily Merkle-root anchors for the Raptor Intelligence event ledger.
 
-Every night, Raptor computes a Merkle root over the chain heads of all of its
-hash-chained source streams and commits it here. Because this repo is public and
-GitHub timestamps every commit, each anchor is third-party proof that the ledger's
-history existed — unaltered — as of that date.
+**Anchoring ran from 2026-08-12 to 2026-08-14 and has stopped.** The ledger it
+committed to was retired on 2026-08-21; the last section explains what that means
+for the anchors already published here. Everything below describes what these
+files are and how to check them, in the tense it happened.
+
+Each night the ledger ran, Raptor computed a Merkle root over the chain heads of
+all of its hash-chained source streams and committed it here. Because this repo is
+public and GitHub timestamps every commit, each anchor is third-party proof that
+the ledger's history existed — unaltered — as of that date.
 
 Format: `anchors/YYYY-MM-DD.json` → `{ "date", "merkle_root", "source_heads": { ... } }`
 
@@ -43,5 +48,28 @@ do not continue; anchors from **2026-08-14** onward cover the production ledger,
 which begins from genesis.
 
 Merkle roots before and after that date are therefore **not** expected to relate
-to each other. This section is the explanation of that discontinuity, and it is
-the last one there will be: the gate no longer writes to the chain at all.
+to each other. This section is the explanation of that discontinuity.
+
+---
+
+## Where anchoring stopped (2026-08-21)
+
+The last anchor here is dated **2026-08-14**. On **2026-08-21** the ledger itself
+was retired and the database holding it was deleted, so there has been nothing to
+anchor since. This repository is kept public rather than taken down, because an
+integrity mechanism that disappears when its subject does is worth less than one
+that says plainly where it ended.
+
+What that means for the anchors already published:
+
+- They remain valid commitments to the state the ledger held on their dates. Each
+  carries an OpenTimestamps proof (`.ots`) and a sigstore attestation
+  (`.sigstore.json`), neither of which depends on Raptor still existing.
+- They are no longer *checkable against a live ledger*. Verifying a chain hash
+  against an anchored root requires the raw payloads, which survive outside this
+  repo: two content-addressed R2 buckets that are complete only together, and
+  which are labelled in place with their own README.
+- No further anchors will be written to this repo.
+
+The design is not retired, only this deployment of it. Nothing above should be
+read as a claim that Raptor is anchoring anything today.
